@@ -243,11 +243,12 @@ function process_auth_result()
   # FIX: decimal separator in bc(1) is '.' regardless of the locale
   # rad_eap_test: Zeile 249: printf: .020428888: Ungültige Zahl.
   # rad_eap_test: Zeile 250: printf: 20.428888000: Ungültige Zahl.
-  if [ -z $PROMETHEUS ]
+  if [ -n "$PROMETHEUS" ]
   then 
 	  PROG_OUT=$(
 		  # fake numeric locale just for printf with format %f
-		  LC_ALL="C" printf "radius_auth_latency{type=\"eapol_test\"} %0.2f" $TIME_SEC
+		  LC_ALL="C" printf "radius_auth_latency{type=\"eapol_test\"} %0.2f\n" $TIME_SEC
+		  LC_ALL="C" printf "radius_auth_latency{type=\"eapol_test\", measurement=\"rtt\"} %0.0f\n" $TIME_MSEC
 		  LC_ALL="C" printf "radius_auth_success{type=\"eapol_test\"} %i" $NUMERIC_STATUS_CODE
 		)
   else  
@@ -915,7 +916,7 @@ function check_settings()
 # ===========================================================================================
 function process_options()
 {
-  while getopts "H:P:S:u:p:t:m:s:e:t:M:i:d:j:k:a:A:l:2:x:vcNO:I:CTfhbB:n:gVX:64o:" opt
+  while getopts "oH:P:S:u:p:t:m:s:e:t:M:i:d:j:k:a:A:l:2:x:vcNO:I:CTfhbB:n:gVX:64" opt
   do
     case "$opt" in
       H) ADDRESS=$OPTARG;;
@@ -953,7 +954,7 @@ function process_options()
       d) DOMAIN_MATCH="$OPTARG";;
       6) IPV6="YES";;
       4) IPV6="NO";;
-	  0) PROMETHEUS=1;;
+	  o) PROMETHEUS=1;;
       h) usage;;
       \?) usage;;
     esac
