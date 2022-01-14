@@ -243,13 +243,20 @@ function process_auth_result()
   # FIX: decimal separator in bc(1) is '.' regardless of the locale
   # rad_eap_test: Zeile 249: printf: .020428888: Ungültige Zahl.
   # rad_eap_test: Zeile 250: printf: 20.428888000: Ungültige Zahl.
-
-  PROG_OUT=$(
-	  # fake numeric locale just for printf with format %f
-	  LC_ALL="C" printf "%s; %0.2f sec " "$STATUS_CODE" $TIME_SEC
-	  LC_ALL="C" printf "|rtt=%0.0fms;;;0;%d accept=1;0.5:;0:;0;1\n" $TIME_MSEC $((TIMEOUT * 1000))
-	)
-
+  if [ -z $PROMETHEUS ]
+  then 
+	  PROG_OUT=$(
+		  # fake numeric locale just for printf with format %f
+		  LC_ALL="C" printf "radius_auth_latency{type=\"eapol_test\"} %0.2f" $TIME_SEC
+		  LC_ALL="C" printf "radius_auth_success{type=\"eapol_test\"} %i" $NUMERIC_STATUS_CODE
+		)
+  else  
+	  PROG_OUT=$(
+		  # fake numeric locale just for printf with format %f
+		  LC_ALL="C" printf "%s; %0.2f sec " "$STATUS_CODE" $TIME_SEC
+		  LC_ALL="C" printf "|rtt=%0.0fms;;;0;%d accept=1;0.5:;0:;0;1\n" $TIME_MSEC $((TIMEOUT * 1000))
+		)
+  fi
   # processing based on $RETURN_CODE
   case "$RETURN_CODE" in
     $RET_SUCC)                              # successfull authentication
@@ -398,6 +405,7 @@ function determine_return_code()
   then
     RETURN_CODE=$RET_EAPOL_TEST_FAILED               # eapol_test failed to execute
     STATUS_CODE="$OUT"
+	NUMERIC_STATUS_CODE="666"
   fi
 
   # determine the RETURN_CODE based on specific constants used in eapol_test output
@@ -405,62 +413,77 @@ function determine_return_code()
   then
     RETURN_CODE=$RET_SUCC               # success
     STATUS_CODE="access-accept"
+	NUMERIC_STATUS_CODE="1"
 
   elif [[ -n "$DOMAIN_MATCH" && "$OUT" =~ $domain_mismatch ]]        # domain match was speficied
   then
     RETURN_CODE=$RET_DOMAIN_MISMATCH         # domain name mismatch
     STATUS_CODE="access-reject (domain mismatch [$(get_domain_mismatch_details)])"
+	NUMERIC_STATUS_CODE="2"
 
   elif [[ -n "$SUBJ_MATCH" && "$OUT" =~ $cert_subj_mismatch ]]        # certifitace subject was speficied
   then
     RETURN_CODE=$RET_CERT_SUBJ_MISMATCH         # certificate subject mismatch
     STATUS_CODE="access-reject (certificate subject mismatch [$(echo "$OUT" | grep 'did not match with' | sed 's/TLS: Subject //')])"
+	NUMERIC_STATUS_CODE="3"
 
   elif [[ -n "$CA_CRT" && "$OUT" =~ $ca_mismatch_incomplete_chain ]]        # CA was speficied, but is incomplete
   then
     RETURN_CODE=$RET_CERT_CA_MISMATCH_INCOMPLETE         # certificate not matching CA
     STATUS_CODE="access-reject (certificate not matching specified CA [used CA does not have a complete chain])"
+	NUMERIC_STATUS_CODE="4"
 
   elif [[ -n "$CA_CRT" && "$OUT" =~ $ca_mismatch_cert_not_matching_ca ]]        # CA was speficied but does not match server cert
   then
     RETURN_CODE=$RET_CERT_CA_MISMATCH         # certificate not matching CA
     STATUS_CODE="access-reject (certificate not matching specified CA)"
+	NUMERIC_STATUS_CODE="5"
 
   elif [[ -n "$CA_CRT" && "$OUT" =~ $ca_mismatch_selfsign ]]        # CA was speficied but the server is sending a completely different chain
   then
     RETURN_CODE=$RET_CERT_CA_MISMATCH         # certificate not matching CA
     STATUS_CODE="access-reject (certificate not matching specified CA)"
+	NUMERIC_STATUS_CODE="6"
 
   elif [[ -n "$CA_CRT" && "$OUT" =~ $cert_expired && "(echo "$OUT" | grep "$cert_expired")" =~ $root_cert ]]        # root CA certificate expired
   then
     RETURN_CODE=$RET_CERT_EXPIRED             # certificate expired
     STATUS_CODE="access-reject (CA certificate expired [$(echo "$OUT" | grep "$cert_expired" | sed 's/^.*subject/subject/; s/ err=.*//')])"
+	NUMERIC_STATUS_CODE="7"
 
   # certificate expired (a more complex logic would be probably needed to distinguish end server and intermediate certs)
   elif [[ -n "$CA_CRT" && "$OUT" =~ $cert_expired && ! "(echo "$OUT" | grep "$cert_expired")" =~ $root_cert ]]
   then
     RETURN_CODE=$RET_CERT_EXPIRED         # certificate expired
     STATUS_CODE="access-reject (certificate expired [$(echo "$OUT" | grep "$cert_expired" | sed 's/^.*subject/subject/; s/ err=.*//')])"
+	NUMERIC_STATUS_CODE="8"
 
   # TODO - distinguish CA cert and server cert
   elif [[ -n "$CA_CRT" && "$OUT" =~ $cert_not_yet_valid ]]        # certificate is not yet valid
   then
     RETURN_CODE=$RET_CERT_IN_FUTURE             # certificate issued in future
     STATUS_CODE="access-reject (certificate is not yet valid [$(echo "$OUT" | grep "$cert_not_yet_valid" | sed 's/^.*subject/subject/; s/ err=.*//')])"
+	NUMERIC_STATUS_CODE="9"
 
   elif [[ "$OUT" =~ $passwd_expired ]] # MSCHAPv2 password expiry
   then
     RETURN_CODE=$RET_PASSWD_EXPIRED
     STATUS_CODE="access-reject (password has expired)"
+	NUMERIC_STATUS_CODE="10"
+
   elif [[ "$OUT" =~ $eap_fail1 || "$OUT" =~ $eap_fail2 || "$OUT" =~ $reject ]]
   then
     RETURN_CODE=$RET_EAP_FAILED         # auth failed
     STATUS_CODE="access-reject"
+	NUMERIC_STATUS_CODE="11"
+
 
   elif [[ "$OUT" =~ $timeout ]]
   then
     RETURN_CODE=$RET_RADIUS_NOT_AVAIL   # timeout ?
     STATUS_CODE="timeout"
+	NUMERIC_STATUS_CODE="12"
+	
   fi
 
   save_server_cert                             # always save the server cert if the user requested it
@@ -892,7 +915,7 @@ function check_settings()
 # ===========================================================================================
 function process_options()
 {
-  while getopts "H:P:S:u:p:t:m:s:e:t:M:i:d:j:k:a:A:l:2:x:vcNO:I:CTfhbB:n:gVX:64" opt
+  while getopts "H:P:S:u:p:t:m:s:e:t:M:i:d:j:k:a:A:l:2:x:vcNO:I:CTfhbB:n:gVX:64o:" opt
   do
     case "$opt" in
       H) ADDRESS=$OPTARG;;
@@ -930,6 +953,7 @@ function process_options()
       d) DOMAIN_MATCH="$OPTARG";;
       6) IPV6="YES";;
       4) IPV6="NO";;
+	  0) PROMETHEUS=1;;
       h) usage;;
       \?) usage;;
     esac
