@@ -247,7 +247,7 @@ function process_auth_result()
   then 
 	  PROG_OUT=$(
 		  # fake numeric locale just for printf with format %f
-		  LC_ALL="C" printf "radius_auth_latency{type=\"eapol_test\"} %0.2f\n" $TIME_SEC
+		  LC_ALL="C" printf "radius_auth_latency{type=\"eapol_test\"} %0.4f\n" $TIME_SEC
 		  LC_ALL="C" printf "radius_auth_success{type=\"eapol_test\"} %i" $NUMERIC_STATUS_CODE
 		)
   else  
